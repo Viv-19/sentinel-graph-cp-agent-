@@ -42,22 +42,41 @@
     }
 
     .main-area {
-      display: grid;
-      grid-template-columns: 250px 1fr 1fr;
+      display: flex;
+      flex: 1;
       overflow: hidden;
     }
 
+    .resize-handle {
+      position: relative;
+      flex: 0 0 4px;
+      cursor: col-resize;
+      background: #21262d;
+      transition: background 0.15s ease;
+      z-index: 10;
+    }
+    .resize-handle:hover, .resize-handle[data-resize-handle-active] {
+      background: #58a6ff;
+    }
+    .resize-indicator {
+      position: absolute;
+      top: 0; left: -4px; right: -4px; bottom: 0;
+    }
+
     .editor-pane {
-      border-right: 1px solid #21262d;
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      height: 100%;
+      min-height: 0;
     }
 
     .right-pane {
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      height: 100%;
+      min-height: 0;
       background: #0d1117;
     }
 
@@ -376,6 +395,7 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/react-resizable-panels@2.1.4/dist/index.umd.js"></script>
 
   <script>
     window.require = { paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' } };
@@ -384,6 +404,40 @@
 
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
+    const PanelGroup = window.ReactResizablePanels ? window.ReactResizablePanels.PanelGroup : null;
+    const Panel = window.ReactResizablePanels ? window.ReactResizablePanels.Panel : null;
+    const PanelResizeHandle = window.ReactResizablePanels ? window.ReactResizablePanels.PanelResizeHandle : null;
+
+    if (!PanelGroup) {
+      console.warn("react-resizable-panels not loaded. Using fallback layout.");
+    }
+
+    class ErrorBoundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { hasError: false };
+      }
+      static getDerivedStateFromError(error) {
+        return { hasError: true };
+      }
+      componentDidCatch(error, errorInfo) {
+        console.error("UI Crash detected:", error, errorInfo);
+      }
+      render() {
+        if (this.state.hasError) {
+          return <div style={{ padding: 20, color: '#f85149', fontFamily: 'monospace' }}>⚠ UI Crash Detected. Check console for details.</div>;
+        }
+        return this.props.children;
+      }
+    }
+
+    function ResizeHandle({ vertical }) {
+      return (
+        <PanelResizeHandle className="resize-handle" style={{ cursor: vertical ? 'row-resize' : 'col-resize' }}>
+          <div className="resize-indicator" />
+        </PanelResizeHandle>
+      );
+    }
 
     /* ═══════════════════════════════════════════════
        ICONS (inline SVG helpers)
@@ -879,31 +933,43 @@
        APP (Main Container)
        ═══════════════════════════════════════════════ */
 
-    function Sidebar({ sessions, activeSessionId, onSelectSession, onCreateSession }) {
+    function Sidebar({ sessions, activeSessionId, onSelectSession, onCreateSession, isOpen }) {
+      const sortedSessions = [...sessions].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+
       return (
-        <div style={{ borderRight: '1px solid #21262d', display: 'flex', flexDirection: 'column', background: '#0d1117' }}>
-          <div style={{ padding: '16px', borderBottom: '1px solid #21262d' }}>
+        <div style={{ borderRight: '1px solid #21262d', display: 'flex', flexDirection: 'column', background: '#0d1117', height: '100%', width: '100%', transition: 'width 0.2s ease' }}>
+          <div style={{ padding: '16px', borderBottom: '1px solid #21262d', textAlign: 'center' }}>
             <button onClick={onCreateSession} className="btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
-              + New Session
+              {isOpen ? '+ New Session' : '+'}
             </button>
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
-            {sessions.map(session => (
+            {sortedSessions.map(session => (
               <div 
                 key={session.id} 
                 onClick={() => onSelectSession(session.id)}
+                title={session.title}
                 style={{ 
-                  padding: '12px 16px', cursor: 'pointer', borderBottom: '1px solid #21262d',
+                  padding: isOpen ? '12px 16px' : '12px 0', cursor: 'pointer', borderBottom: '1px solid #21262d',
                   background: activeSessionId === session.id ? '#161b22' : 'transparent',
-                  borderLeft: activeSessionId === session.id ? '3px solid #58a6ff' : '3px solid transparent'
+                  borderLeft: activeSessionId === session.id ? '3px solid #58a6ff' : '3px solid transparent',
+                  textAlign: isOpen ? 'left' : 'center'
                 }}
               >
-                <div style={{ fontSize: '13px', fontWeight: '600', color: '#e6edf3', marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {session.title}
-                </div>
-                <div style={{ fontSize: '11px', color: '#8b949e' }}>
-                  {new Date(session.updatedAt).toLocaleDateString()}
-                </div>
+                {isOpen ? (
+                  <>
+                    <div style={{ fontSize: '13px', fontWeight: '600', color: '#e6edf3', marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {session.title}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#8b949e' }}>
+                      {new Date(session.updatedAt).toLocaleDateString()}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#e6edf3' }}>
+                    {session.title.substring(0, 2).toUpperCase()}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -925,6 +991,7 @@
       const [activeTab, setActiveTab] = useState('logs');
       const [sessions, setSessions] = useState([]);
       const [activeSessionId, setActiveSessionId] = useState(null);
+      const [sidebarOpen, setSidebarOpen] = useState(true);
 
       useEffect(() => {
         fetch('/sessions').then(r => r.json()).then(data => {
@@ -1119,6 +1186,12 @@
           {/* ── HEADER BAR ── */}
           <div className="header-bar">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button 
+                onClick={() => setSidebarOpen(prev => !prev)}
+                style={{ background: 'transparent', border: 'none', color: '#e6edf3', cursor: 'pointer', fontSize: 18, padding: '0 4px', marginRight: '4px' }}
+              >
+                ☰
+              </button>
               <div style={{
                 width: 28, height: 28, borderRadius: 7,
                 background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
@@ -1146,79 +1219,140 @@
           </div>
 
           {/* ── MAIN AREA ── */}
-          <div className="main-area">
-            <Sidebar 
-              sessions={sessions} 
-              activeSessionId={activeSessionId} 
-              onSelectSession={handleSelectSession} 
-              onCreateSession={handleCreateSession} 
-            />
-            {/* LEFT: Code Editor */}
-            <div className="editor-pane">
-              <div className="pane-header">
-                <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#8b949e" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
-                </svg>
-                <span>Editor</span>
-                <div style={{ flex: 1 }} />
-                <span style={{ fontSize: 10, color: '#484f58', fontFamily: "'JetBrains Mono', monospace" }}>
-                  {inputCode.split('\n').length} lines
-                </span>
-              </div>
-              <Editor
-                value={inputCode}
-                onChange={setInputCode}
-                disabled={status === 'loading' || status === 'approving'}
-              />
-            </div>
+          <div className="main-area" style={{ flex: 1, display: 'flex' }}>
+            {PanelGroup ? (
+              <>
+                <div style={{ width: sidebarOpen ? '0px' : '60px', transition: 'width 0.2s ease', flexShrink: 0, overflow: 'hidden' }}>
+                  {!sidebarOpen && (
+                    <Sidebar 
+                      sessions={sessions} 
+                      activeSessionId={activeSessionId} 
+                      onSelectSession={handleSelectSession} 
+                      onCreateSession={handleCreateSession} 
+                      isOpen={false}
+                    />
+                  )}
+                </div>
+                <PanelGroup direction="horizontal" autoSaveId="sentinel-layout-main" style={{ flex: 1 }}>
+                  {/* LEFT: Sidebar Panel */}
+                  {sidebarOpen && (
+                    <>
+                      <Panel defaultSize={20} minSize={10} id="sidebar-panel">
+                        <Sidebar 
+                          sessions={sessions} 
+                          activeSessionId={activeSessionId} 
+                          onSelectSession={handleSelectSession} 
+                          onCreateSession={handleCreateSession} 
+                          isOpen={true}
+                        />
+                      </Panel>
+                      <ResizeHandle />
+                    </>
+                  )}
 
-            {/* RIGHT: Tabbed Panel */}
-            <div className="right-pane">
-              <div className="tab-strip">
-                <button
-                  className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('logs')}
-                >
-                  <TerminalIcon size={13} />
-                  Logs
-                </button>
-                <button
-                  className={`tab-btn ${activeTab === 'findings' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('findings')}
-                >
-                  <ListIcon size={13} />
-                  {findingsTabLabel}
-                </button>
-                <button
-                  className={`tab-btn ${activeTab === 'results' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('results')}
-                >
-                  <DiffIcon size={13} />
-                  Results
-                </button>
-              </div>
-              <div className="tab-content">
-                {activeTab === 'logs' && (
-                  <LogsPanel
-                    loading={status === 'loading'}
-                    completed={status === 'pending' || status === 'completed' || status === 'approving'}
+                  {/* CENTER: Code Editor Panel */}
+                  <Panel defaultSize={40} minSize={20} id="editor-panel">
+                    <div className="editor-pane">
+                    <div className="pane-header">
+                      <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#8b949e" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+                      </svg>
+                      <span>Editor</span>
+                      <div style={{ flex: 1 }} />
+                      <span style={{ fontSize: 10, color: '#484f58', fontFamily: "'JetBrains Mono', monospace" }}>
+                        {inputCode.split('\n').length} lines
+                      </span>
+                    </div>
+                    <Editor
+                      value={inputCode}
+                      onChange={setInputCode}
+                      disabled={status === 'loading' || status === 'approving'}
+                    />
+                  </div>
+                </Panel>
+
+                 <ResizeHandle />
+
+                {/* RIGHT: Tools Panel Split */}
+                <Panel defaultSize={40} minSize={25} id="right-panel">
+                  <PanelGroup direction="vertical" autoSaveId="sentinel-layout-right">
+                    {/* Tools Panel TOP: Logs/Findings */}
+                    <Panel defaultSize={50} minSize={20} id="findings-panel">
+                      <div className="right-pane">
+                        <div className="tab-strip">
+                          <button className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => setActiveTab('logs')}><TerminalIcon size={13} />Logs</button>
+                          <button className={`tab-btn ${activeTab === 'findings' ? 'active' : ''}`} onClick={() => setActiveTab('findings')}><ListIcon size={13} />{findingsTabLabel}</button>
+                        </div>
+                        <div className="tab-content" style={{ overflowY: 'auto', flex: 1 }}>
+                          {activeTab === 'logs' ? (
+                            <LogsPanel loading={status === 'loading'} completed={status === 'pending' || status === 'completed' || status === 'approving'} />
+                          ) : (
+                            <FindingsList findings={findings} decisions={decisions} onApprove={handleApproveItem} onReject={handleRejectItem} onApproveAll={handleApproveAll} onRejectAll={handleRejectAll} />
+                          )}
+                        </div>
+                      </div>
+                    </Panel>
+
+                    <ResizeHandle vertical />
+
+                    {/* Tools Panel BOTTOM: Diff Viewer */}
+                    <Panel defaultSize={50} minSize={20} id="diff-panel">
+                      <div className="right-pane diff-section" style={{ borderTop: '1px solid #21262d' }}>
+                        <div className="pane-header">
+                          <DiffIcon size={13} />
+                          <span>Diff Viewer</span>
+                        </div>
+                        <div className="tab-content" style={{ padding: 0 }}>
+                          <DiffViewer diffData={diffData} />
+                        </div>
+                      </div>
+                    </Panel>
+                  </PanelGroup>
+                </Panel>
+              </PanelGroup>
+              </>
+            ) : (
+              <div style={{ display: 'flex', width: '100%', height: '100%' }}>
+                <div style={{ width: sidebarOpen ? '250px' : '60px', borderRight: '1px solid #21262d', transition: 'width 0.2s ease' }}>
+                  <Sidebar 
+                    sessions={sessions} 
+                    activeSessionId={activeSessionId} 
+                    onSelectSession={handleSelectSession} 
+                    onCreateSession={handleCreateSession} 
+                    isOpen={sidebarOpen}
                   />
-                )}
-                {activeTab === 'findings' && (
-                  <FindingsList
-                    findings={findings}
-                    decisions={decisions}
-                    onApprove={handleApproveItem}
-                    onReject={handleRejectItem}
-                    onApproveAll={handleApproveAll}
-                    onRejectAll={handleRejectAll}
+                </div>
+                <div className="editor-pane" style={{ flex: 1, borderRight: '1px solid #21262d' }}>
+                  <div className="pane-header">
+                    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#8b949e" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+                    </svg>
+                    <span>Editor</span>
+                    <div style={{ flex: 1 }} />
+                    <span style={{ fontSize: 10, color: '#484f58', fontFamily: "'JetBrains Mono', monospace" }}>
+                      {inputCode.split('\n').length} lines
+                    </span>
+                  </div>
+                  <Editor
+                    value={inputCode}
+                    onChange={setInputCode}
+                    disabled={status === 'loading' || status === 'approving'}
                   />
-                )}
-                {activeTab === 'results' && (
-                  <DiffViewer diffData={diffData} />
-                )}
+                </div>
+                <div className="right-pane" style={{ width: '40%' }}>
+                  <div className="tab-strip">
+                    <button className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => setActiveTab('logs')}><TerminalIcon size={13} />Logs</button>
+                    <button className={`tab-btn ${activeTab === 'findings' ? 'active' : ''}`} onClick={() => setActiveTab('findings')}><ListIcon size={13} />{findingsTabLabel}</button>
+                    <button className={`tab-btn ${activeTab === 'results' ? 'active' : ''}`} onClick={() => setActiveTab('results')}><DiffIcon size={13} />Results</button>
+                  </div>
+                  <div className="tab-content">
+                    {activeTab === 'logs' && <LogsPanel loading={status === 'loading'} completed={status === 'pending' || status === 'completed' || status === 'approving'} />}
+                    {activeTab === 'findings' && <FindingsList findings={findings} decisions={decisions} onApprove={handleApproveItem} onReject={handleRejectItem} onApproveAll={handleApproveAll} onRejectAll={handleRejectAll} />}
+                    {activeTab === 'results' && <DiffViewer diffData={diffData} />}
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* ── ACTION BAR ── */}
@@ -1273,7 +1407,11 @@
        ═══════════════════════════════════════════════ */
 
     const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+    root.render(
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    );
   </script>
 </body>
 </html>
