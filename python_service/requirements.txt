@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+langgraph
+langchain-ollama
+langgraph-checkpoint
+python-dotenv
