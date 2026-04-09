@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <script>
     tailwind.config = {
+      darkMode: 'class',
       theme: {
         extend: {
           fontFamily: {
@@ -22,18 +23,15 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     html, body, #root { height: 100%; margin: 0; overflow: hidden; }
-    body { font-family: 'Inter', system-ui, sans-serif; background: #0d1117; color: #e6edf3; }
+    body { font-family: 'Inter', system-ui, sans-serif; transition: background-color 0.2s, color 0.2s; }
 
     .app-shell {
       display: grid;
       grid-template-rows: 48px 1fr 56px;
       height: 100vh;
-      background: #0d1117;
     }
 
     .header-bar {
-      background: #161b22;
-      border-bottom: 1px solid #21262d;
       display: flex;
       align-items: center;
       padding: 0 16px;
@@ -51,7 +49,7 @@
       position: relative;
       flex: 0 0 4px;
       cursor: col-resize;
-      background: #21262d;
+      background: rgba(139, 148, 158, 0.2);
       transition: background 0.15s ease;
       z-index: 10;
     }
@@ -77,12 +75,9 @@
       overflow: hidden;
       height: 100%;
       min-height: 0;
-      background: #0d1117;
     }
 
     .action-bar {
-      background: #161b22;
-      border-top: 1px solid #21262d;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -92,8 +87,6 @@
 
     .tab-strip {
       display: flex;
-      background: #161b22;
-      border-bottom: 1px solid #21262d;
       padding: 0 4px;
       flex-shrink: 0;
     }
@@ -137,8 +130,6 @@
       align-items: center;
       padding: 0 12px;
       height: 36px;
-      background: #161b22;
-      border-bottom: 1px solid #21262d;
       flex-shrink: 0;
       gap: 8px;
     }
@@ -249,8 +240,6 @@
     .spin-icon { animation: spin 1s linear infinite; }
 
     .finding-card {
-      background: #161b22;
-      border: 1px solid #21262d;
       border-radius: 10px;
       padding: 14px;
       margin-bottom: 10px;
@@ -329,8 +318,6 @@
       align-items: center;
       gap: 8px;
       padding: 6px 12px;
-      background: #161b22;
-      border-bottom: 1px solid #21262d;
       flex-shrink: 0;
     }
     .diff-line {
@@ -388,7 +375,7 @@
     .empty-state p { font-size: 13px; max-width: 280px; line-height: 1.5; }
   </style>
 </head>
-<body>
+<body className="bg-white text-black dark:bg-[#0d1117] dark:text-[#e6edf3] transition-colors duration-200">
 
   <div id="root"></div>
 
@@ -537,7 +524,7 @@
        EDITOR COMPONENT (Monaco Wrapper)
        ═══════════════════════════════════════════════ */
 
-    function Editor({ value, onChange, disabled }) {
+    function Editor({ value, onChange, disabled, theme }) {
       const containerRef = useRef(null);
       const editorRef = useRef(null);
       const isSettingValue = useRef(false);
@@ -577,7 +564,7 @@
           const editor = monaco.editor.create(containerRef.current, {
             value: value || '',
             language: 'javascript',
-            theme: 'sentinel-dark',
+            theme: theme === 'vs-dark' ? 'sentinel-dark' : 'vs',
             fontFamily: "'JetBrains Mono', monospace",
             fontSize: 13,
             lineHeight: 20,
@@ -672,6 +659,15 @@
       { id: 'aggregate', icon: '📋', label: 'Aggregator',    detail: 'Compiling findings and generating report...' },
     ];
 
+    const PROBLEM_AGENT_STEPS = [
+      { id: 'problem_analyzer',    icon: '📝', label: 'ProblemAnalyzer',      detail: 'Parsing problem description and extracting structure...' },
+      { id: 'constraint_analyzer', icon: '📐', label: 'ConstraintAnalyzer',   detail: 'Analyzing constraints and inferring limits...' },
+      { id: 'complexity_estimator',icon: '📊', label: 'ComplexityEstimator',  detail: 'Estimating required time and space complexity...' },
+      { id: 'pattern_recognizer',  icon: '🧩', label: 'PatternRecognizer',   detail: 'Detecting algorithm pattern from problem...' },
+      { id: 'strategy_planner',    icon: '🗺️', label: 'StrategyPlanner',      detail: 'Building an optimal strategy plan...' },
+      { id: 'test_validator',      icon: '✅', label: 'TestCaseValidator',    detail: 'Simulating strategy over sample test cases...' },
+    ];
+
     function LogsPanel({ loading, completed }) {
       const [visibleLogs, setVisibleLogs] = useState([]);
       const intervalRef = useRef(null);
@@ -739,6 +735,123 @@
     }
 
     /* ═══════════════════════════════════════════════
+       PROBLEM AGENT TRACKER
+       ═══════════════════════════════════════════════ */
+
+    function ProblemAgentTracker({ running, completed }) {
+      const [visibleSteps, setVisibleSteps] = useState([]);
+      const intervalRef = useRef(null);
+      const timerRef = useRef(null);
+      const [elapsed, setElapsed] = useState(0);
+
+      useEffect(() => {
+        if (running && !completed) {
+          setVisibleSteps([]);
+          setElapsed(0);
+          let step = 0;
+
+          // Progress through agents at ~15s intervals (realistic for LLM calls)
+          intervalRef.current = setInterval(() => {
+            if (step < PROBLEM_AGENT_STEPS.length) {
+              setVisibleSteps(prev => {
+                const updated = prev.map(s => ({ ...s, status: 'done' }));
+                updated.push({ ...PROBLEM_AGENT_STEPS[step], status: 'running' });
+                return updated;
+              });
+              step++;
+            } else {
+              // Keep last step as running until completed
+              clearInterval(intervalRef.current);
+            }
+          }, 15000);
+
+          // Show first step immediately
+          setVisibleSteps([{ ...PROBLEM_AGENT_STEPS[0], status: 'running' }]);
+          step = 1;
+
+          // Timer
+          timerRef.current = setInterval(() => {
+            setElapsed(prev => prev + 1);
+          }, 1000);
+        }
+
+        if (completed) {
+          clearInterval(intervalRef.current);
+          clearInterval(timerRef.current);
+          setVisibleSteps(PROBLEM_AGENT_STEPS.map(s => ({ ...s, status: 'done' })));
+        }
+
+        return () => {
+          clearInterval(intervalRef.current);
+          clearInterval(timerRef.current);
+        };
+      }, [running, completed]);
+
+      if (!running && !completed) return null;
+
+      const formatTime = (s) => {
+        const m = Math.floor(s / 60);
+        const sec = s % 60;
+        return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+      };
+
+      return (
+        <div style={{
+          background: 'rgba(88, 166, 255, 0.06)',
+          border: '1px solid rgba(88, 166, 255, 0.2)',
+          borderRadius: 10,
+          padding: '14px 16px',
+          marginBottom: 12,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#58a6ff', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              {completed ? '✅ Analysis Pipeline Complete' : '⚙️ Analysis Pipeline Running'}
+            </span>
+            <span style={{ fontSize: 11, color: '#8b949e', fontFamily: "'JetBrains Mono', monospace" }}>
+              {formatTime(elapsed)}
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {visibleSteps.map((step, idx) => (
+              <div key={step.id} style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '6px 10px', borderRadius: 8,
+                background: step.status === 'running' ? 'rgba(88, 166, 255, 0.08)' : 'transparent',
+                transition: 'all 0.3s ease',
+                animation: step.status === 'running' ? 'fadeIn 0.3s ease' : undefined,
+              }}>
+                <span style={{ fontSize: 15, lineHeight: 1, flexShrink: 0 }}>{step.icon}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#e6edf3' }}>{step.label}</span>
+                    {step.status === 'running' && <SpinnerIcon size={11} />}
+                    {step.status === 'done' && <span style={{ color: '#3fb950' }}><CheckIcon size={11} /></span>}
+                  </div>
+                  <p style={{ fontSize: 11, color: '#8b949e', margin: 0 }}>{step.detail}</p>
+                </div>
+                <span style={{ fontSize: 10, color: step.status === 'done' ? '#3fb950' : '#58a6ff', fontWeight: 600 }}>
+                  {step.status === 'done' ? 'Done' : 'Running'}
+                </span>
+              </div>
+            ))}
+          </div>
+          {/* Progress bar */}
+          <div style={{ marginTop: 10, height: 3, borderRadius: 3, background: 'rgba(88, 166, 255, 0.15)', overflow: 'hidden' }}>
+            <div style={{
+              height: '100%',
+              borderRadius: 3,
+              background: 'linear-gradient(90deg, #58a6ff, #8b5cf6)',
+              width: completed
+                ? '100%'
+                : `${Math.min(100, (visibleSteps.filter(s => s.status === 'done').length / PROBLEM_AGENT_STEPS.length) * 100 + 8)}%`,
+              transition: 'width 1s ease',
+            }} />
+          </div>
+        </div>
+      );
+    }
+
+    /* ═══════════════════════════════════════════════
        FINDING ITEM
        ═══════════════════════════════════════════════ */
 
@@ -747,19 +860,19 @@
       const type = (finding.type || 'style').toLowerCase();
 
       return (
-        <div className={`finding-card severity-${sev}`}>
+        <div className="finding-card severity-${sev} bg-gray-50 dark:bg-[#161b22] border border-gray-200 dark:border-[#21262d]">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
                 <span className={`type-badge type-${type}`}>{finding.type || 'General'}</span>
                 <span className={`sev-badge sev-${sev}`}>{finding.severity || 'low'}</span>
               </div>
-              <p style={{ fontSize: 13, color: '#e6edf3', lineHeight: 1.5, margin: '0 0 10px 0' }}>
+              <p className="text-gray-900 dark:text-[#e6edf3]" style={{ fontSize: 13, lineHeight: 1.5, margin: '0 0 10px 0' }}>
                 {finding.message}
               </p>
               {finding.suggestion && (
-                <div style={{ background: '#0d1117', border: '1px solid #21262d', borderRadius: 8, padding: '10px 12px' }}>
-                  <p style={{ fontSize: 10, fontWeight: 700, color: '#8b949e', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 4px 0' }}>
+                <div className="bg-white dark:bg-[#0d1117] border border-gray-200 dark:border-[#21262d]" style={{ borderRadius: 8, padding: '10px 12px' }}>
+                  <p className="text-gray-500 dark:text-[#8b949e]" style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 4px 0' }}>
                     Suggestion
                   </p>
                   <p style={{ fontSize: 12, color: '#7ee787', fontFamily: "'JetBrains Mono', monospace", margin: 0, lineHeight: 1.5 }}>
@@ -888,9 +1001,9 @@
       function renderPane(lines, title, dotColor) {
         return (
           <div className="diff-pane">
-            <div className="diff-header">
+            <div className="diff-header bg-gray-50 dark:bg-[#161b22] border-b border-gray-200 dark:border-[#21262d]">
               <span style={{ width: 7, height: 7, borderRadius: '50%', background: dotColor }} />
-              <span style={{ fontSize: 11, fontWeight: 600, color: '#8b949e', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <span className="text-gray-500 dark:text-[#8b949e]" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 {title}
               </span>
             </div>
@@ -937,9 +1050,9 @@
       const sortedSessions = [...sessions].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
 
       return (
-        <div style={{ borderRight: '1px solid #21262d', display: 'flex', flexDirection: 'column', background: '#0d1117', height: '100%', width: '100%', transition: 'width 0.2s ease' }}>
-          <div style={{ padding: '16px', borderBottom: '1px solid #21262d', textAlign: 'center' }}>
-            <button onClick={onCreateSession} className="btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
+        <div className="bg-white dark:bg-[#0d1117] border-r border-gray-200 dark:border-[#21262d] transition-colors duration-200" style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', transition: 'width 0.2s ease, background-color 0.2s, border-color 0.2s' }}>
+          <div className="border-b border-gray-200 dark:border-[#21262d] transition-colors duration-200" style={{ padding: '16px', textAlign: 'center' }}>
+            <button onClick={onCreateSession} className="bg-gray-100 text-gray-900 dark:bg-[#0d1117] dark:text-[#e6edf3] hover:bg-gray-200 dark:hover:bg-[#161b22] transition-colors duration-200" style={{ width: '100%', justifyContent: 'center', padding: '6px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: '600', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
               {isOpen ? '+ New Session' : '+'}
             </button>
           </div>
@@ -949,24 +1062,24 @@
                 key={session.id} 
                 onClick={() => onSelectSession(session.id)}
                 title={session.title}
+                className={activeSessionId === session.id ? 'bg-gray-100 dark:bg-[#161b22]' : 'hover:bg-gray-50 dark:hover:bg-[#161b22] transition-colors duration-200'}
                 style={{ 
-                  padding: isOpen ? '12px 16px' : '12px 0', cursor: 'pointer', borderBottom: '1px solid #21262d',
-                  background: activeSessionId === session.id ? '#161b22' : 'transparent',
+                  padding: isOpen ? '12px 16px' : '12px 0', cursor: 'pointer', borderBottom: '1px solid var(--border-color)',
                   borderLeft: activeSessionId === session.id ? '3px solid #58a6ff' : '3px solid transparent',
                   textAlign: isOpen ? 'left' : 'center'
                 }}
               >
                 {isOpen ? (
                   <>
-                    <div style={{ fontSize: '13px', fontWeight: '600', color: '#e6edf3', marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <div className="text-gray-700 dark:text-[#e6edf3]" style={{ fontSize: '13px', fontWeight: '600', marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {session.title}
                     </div>
-                    <div style={{ fontSize: '11px', color: '#8b949e' }}>
+                    <div className="text-gray-500 dark:text-[#8b949e]" style={{ fontSize: '11px' }}>
                       {new Date(session.updatedAt).toLocaleDateString()}
                     </div>
                   </>
                 ) : (
-                  <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#e6edf3' }}>
+                  <div className="text-gray-700 dark:text-[#e6edf3]" style={{ fontSize: '12px', fontWeight: 'bold' }}>
                     {session.title.substring(0, 2).toUpperCase()}
                   </div>
                 )}
@@ -991,7 +1104,37 @@
       const [activeTab, setActiveTab] = useState('logs');
       const [sessions, setSessions] = useState([]);
       const [activeSessionId, setActiveSessionId] = useState(null);
+      const [problemDescription, setProblemDescription] = useState('');
+      const [problemAnalysis, setProblemAnalysis] = useState(null);
+      const [constraintInsights, setConstraintInsights] = useState(null);
+      const [expectedTC, setExpectedTC] = useState('');
+      const [expectedSC, setExpectedSC] = useState('');
+      const [complexityReasoning, setComplexityReasoning] = useState('');
+      const [detectedPattern, setDetectedPattern] = useState('');
+      const [patternConfidence, setPatternConfidence] = useState(0);
+      const [strategyPlan, setStrategyPlan] = useState(null);
+      const [testCaseValidation, setTestCaseValidation] = useState(null);
+      const [analysisStatus, setAnalysisStatus] = useState('IDLE');
+
+      const [analyzingProblem, setAnalyzingProblem] = useState(false);
+      const [problemAnalysisDone, setProblemAnalysisDone] = useState(false);
       const [sidebarOpen, setSidebarOpen] = useState(true);
+      const [theme, setTheme] = useState(() => {
+        return localStorage.getItem("theme") || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      });
+
+      useEffect(() => {
+        if (theme === "dark") {
+          document.documentElement.classList.add("dark");
+        } else {
+          document.documentElement.classList.remove("dark");
+        }
+        localStorage.setItem("theme", theme);
+      }, [theme]);
+
+      function toggleTheme() {
+        setTheme(prev => prev === "dark" ? "light" : "dark");
+      }
 
       useEffect(() => {
         fetch('/sessions').then(r => r.json()).then(data => {
@@ -1015,6 +1158,17 @@
             const lastCodeEntry = contextHistory.filter(c => c.type === 'code').pop();
             
             setInputCode(lastCodeEntry ? lastCodeEntry.content : '');
+            setProblemDescription(data.problem_description || '');
+            setProblemAnalysis(data.problem_analysis || null);
+            setConstraintInsights(data.constraint_insights || null);
+            setExpectedTC(data.expected_time_complexity || '');
+            setExpectedSC(data.expected_space_complexity || '');
+            setComplexityReasoning(data.complexity_reasoning || '');
+            setDetectedPattern(data.detected_pattern || '');
+            setPatternConfidence(data.pattern_confidence || 0);
+            setStrategyPlan(data.strategy_plan || null);
+            setTestCaseValidation(data.test_case_validation || null);
+            setAnalysisStatus(data.analysis_status || 'IDLE');
             setFindings([]);
             setStatus('idle');
             setLogs([]);
@@ -1035,10 +1189,86 @@
              setActiveSessionId(newSession.id);
              setThreadId(newSession.id);
              setInputCode('');
+             setProblemDescription('');
+             setProblemAnalysis(null);
+             setConstraintInsights(null);
+             setExpectedTC('');
+             setExpectedSC('');
+             setComplexityReasoning('');
+             setDetectedPattern('');
+             setPatternConfidence(0);
+             setStrategyPlan(null);
+             setTestCaseValidation(null);
+             setAnalysisStatus('IDLE');
              setFindings([]);
+             setDecisions({});
              setStatus('idle');
+             setLogs([]);
+             setDiffData(null);
+             setFinalCode('');
+             setError(null);
           });
       }, []);
+
+
+
+      const handleAnalyzeProblem = useCallback(async () => {
+        if (!activeSessionId || !problemDescription.trim()) return;
+        setAnalyzingProblem(true);
+        setProblemAnalysisDone(false);
+        setError(null);
+        try {
+          const res = await fetch(`/sessions/${activeSessionId}/problem/analyze`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ problem_description: problemDescription })
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+          if (data.problem_analysis) {
+            setProblemAnalysis(data.problem_analysis);
+            setConstraintInsights(data.constraint_insights);
+            setExpectedTC(data.expected_time_complexity);
+            setExpectedSC(data.expected_space_complexity);
+            setComplexityReasoning(data.complexity_reasoning);
+            setDetectedPattern(data.detected_pattern);
+            setPatternConfidence(data.pattern_confidence);
+            setStrategyPlan(data.strategy_plan);
+            setTestCaseValidation(data.test_case_validation);
+          }
+          if (data.status) {
+             setAnalysisStatus(data.status);
+          }
+          setProblemAnalysisDone(true);
+        } catch (err) {
+          setError('Problem analysis failed: ' + err.message);
+        } finally {
+          setAnalyzingProblem(false);
+        }
+      }, [activeSessionId, problemDescription]);
+
+      const handleDecision = useCallback(async (decision) => {
+        if (!activeSessionId) return;
+        setAnalysisStatus('LOADING_DECISION');
+        try {
+          const res = await fetch(`/sessions/${activeSessionId}/problem/decision`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision })
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+          if (data.status) {
+             setAnalysisStatus(data.status);
+          }
+          if (data.input_code) {
+             setInputCode(data.input_code);
+          }
+        } catch (err) {
+          alert('Error submitting decision: ' + err.message);
+          setAnalysisStatus('PENDING_DECISION');
+        }
+      }, [activeSessionId]);
 
       const handleApproveItem = useCallback((index) => {
         setDecisions(prev => ({
@@ -1102,6 +1332,11 @@
 
           if (data.error) throw new Error(data.error);
 
+          // Store the review thread_id from Python for approval
+          if (data.thread_id) {
+            setThreadId(data.thread_id);
+          }
+
           const report = data.aggregated_report || data.findings || [];
           setFindings(report);
 
@@ -1127,13 +1362,19 @@
         setError(null);
 
         try {
-          const res = await fetch('/review/approve', {
+          // Use session-aware approval endpoint which uses stored review_thread_id
+          const endpoint = activeSessionId 
+            ? `/sessions/${activeSessionId}/review/approve`
+            : '/review/approve';
+          
+          const body = activeSessionId
+            ? { approved_suggestions: approved }
+            : { thread_id: threadId, approved_suggestions: approved };
+
+          const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              thread_id: threadId,
-              approved_suggestions: approved,
-            }),
+            body: JSON.stringify(body),
           });
           const data = await res.json();
 
@@ -1161,6 +1402,56 @@
         setDiffData(null);
         setError(null);
         setActiveTab('logs');
+        setProblemDescription('');
+        setProblemAnalysis(null);
+        setConstraintInsights(null);
+        setExpectedTC('');
+        setExpectedSC('');
+        setComplexityReasoning('');
+        setDetectedPattern('');
+        setPatternConfidence(0);
+        setStrategyPlan(null);
+        setTestCaseValidation(null);
+        setAnalysisStatus('IDLE');
+      }
+
+      // Re-run review on updated code without resetting analysis state
+      async function handleImproveCode() {
+        if (!inputCode.trim() || !activeSessionId) return;
+        setStatus('loading');
+        setLoading(true);
+        setError(null);
+        setFindings([]);
+        setDecisions({});
+        setDiffData(null);
+        setFinalCode('');
+        setActiveTab('logs');
+
+        try {
+          const res = await fetch(`/sessions/${activeSessionId}/input`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'code', content: inputCode, input_code: inputCode }),
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+
+          if (data.thread_id) setThreadId(data.thread_id);
+
+          const report = data.aggregated_report || data.findings || [];
+          setFindings(report);
+          const initialDecisions = {};
+          report.forEach((_, i) => { initialDecisions[i] = 'approved'; });
+          setDecisions(initialDecisions);
+
+          setLoading(false);
+          setStatus('pending');
+          setActiveTab('findings');
+        } catch (err) {
+          setError(err.message);
+          setLoading(false);
+          setStatus('error');
+        }
       }
 
       const approvedCount = Object.values(decisions).filter(d => d === 'approved').length;
@@ -1184,11 +1475,12 @@
       return (
         <div className="app-shell">
           {/* ── HEADER BAR ── */}
-          <div className="header-bar">
+          <div className="header-bar bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-[#21262d] transition-colors duration-200 text-black dark:text-[#e6edf3]">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button 
                 onClick={() => setSidebarOpen(prev => !prev)}
-                style={{ background: 'transparent', border: 'none', color: '#e6edf3', cursor: 'pointer', fontSize: 18, padding: '0 4px', marginRight: '4px' }}
+                className="text-gray-800 dark:text-[#e6edf3]"
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 18, padding: '0 4px', marginRight: '4px' }}
               >
                 ☰
               </button>
@@ -1205,6 +1497,15 @@
               </span>
             </div>
             <div style={{ flex: 1 }} />
+            
+            <button 
+              onClick={toggleTheme} 
+              className="mr-3 flex items-center justify-center p-1.5 rounded-md bg-gray-200 dark:bg-[#21262d] text-gray-800 dark:text-[#e6edf3] hover:bg-gray-300 dark:hover:bg-[#30363d] transition-colors duration-200"
+              title="Toggle Light/Dark Theme"
+            >
+              {theme === 'dark' ? '☀️' : '🌙'}
+            </button>
+
             <StatusBadge status={status} />
             {error && (
               <div style={{
@@ -1219,7 +1520,7 @@
           </div>
 
           {/* ── MAIN AREA ── */}
-          <div className="main-area" style={{ flex: 1, display: 'flex' }}>
+          <div className="main-area bg-white dark:bg-[#0d1117] text-black dark:text-[#e6edf3] transition-colors duration-200" style={{ flex: 1, display: 'flex' }}>
             {PanelGroup ? (
               <>
                 <div style={{ width: sidebarOpen ? '0px' : '60px', transition: 'width 0.2s ease', flexShrink: 0, overflow: 'hidden' }}>
@@ -1253,17 +1554,19 @@
                   {/* CENTER: Code Editor Panel */}
                   <Panel defaultSize={40} minSize={20} id="editor-panel">
                     <div className="editor-pane">
-                    <div className="pane-header">
-                      <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#8b949e" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                    <div className="pane-header bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-[#21262d] transition-colors duration-200">
+                      <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-gray-500 dark:text-[#8b949e]" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
                       </svg>
-                      <span>Editor</span>
+                      <span className="text-gray-500 dark:text-[#8b949e]">Editor</span>
                       <div style={{ flex: 1 }} />
-                      <span style={{ fontSize: 10, color: '#484f58', fontFamily: "'JetBrains Mono', monospace" }}>
+                      <span className="text-gray-500 dark:text-[#8b949e]" style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}>
                         {inputCode.split('\n').length} lines
                       </span>
                     </div>
                     <Editor
+                      key={theme}
+                      theme={theme === "dark" ? "vs-dark" : "light"}
                       value={inputCode}
                       onChange={setInputCode}
                       disabled={status === 'loading' || status === 'approving'}
@@ -1278,12 +1581,201 @@
                   <PanelGroup direction="vertical" autoSaveId="sentinel-layout-right">
                     {/* Tools Panel TOP: Logs/Findings */}
                     <Panel defaultSize={50} minSize={20} id="findings-panel">
-                      <div className="right-pane">
-                        <div className="tab-strip">
+                      <div className="right-pane bg-gray-50 dark:bg-[#0d1117]">
+                        <div className="tab-strip bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-[#21262d] transition-colors duration-200">
+                          <button className={`tab-btn ${activeTab === 'problem' ? 'active' : ''}`} onClick={() => setActiveTab('problem')}>Problem Input</button>
                           <button className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => setActiveTab('logs')}><TerminalIcon size={13} />Logs</button>
                           <button className={`tab-btn ${activeTab === 'findings' ? 'active' : ''}`} onClick={() => setActiveTab('findings')}><ListIcon size={13} />{findingsTabLabel}</button>
                         </div>
                         <div className="tab-content" style={{ overflowY: 'auto', flex: 1 }}>
+                          {activeTab === 'problem' && (
+                            <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', height: '100%', gap: '12px' }}>
+                              <textarea
+                                value={problemDescription}
+                                onChange={(e) => setProblemDescription(e.target.value)}
+                                placeholder="Paste your Codeforces / CodeChef problem here..."
+                                disabled={analyzingProblem}
+                                className="bg-white dark:bg-[#0d1117] text-gray-900 dark:text-[#e6edf3] border border-gray-200 dark:border-[#21262d]"
+                                style={{ flex: 1, resize: 'none', padding: '12px', borderRadius: '6px', fontFamily: 'inherit', fontSize: '13px' }}
+                              />
+                              
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <h3 className="text-gray-900 dark:text-[#e6edf3]" style={{ margin: 0, fontSize: '14px', fontWeight: 'bold' }}>Problem Analysis</h3>
+                                <button 
+                                  onClick={handleAnalyzeProblem}
+                                  disabled={analyzingProblem || !problemDescription.trim()}
+                                  className="bg-blue-600 text-white hover:bg-blue-700 transition-colors duration-200"
+                                  style={{ padding: '6px 12px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', cursor: (analyzingProblem || !problemDescription.trim()) ? 'not-allowed' : 'pointer', opacity: (analyzingProblem || !problemDescription.trim()) ? 0.6 : 1 }}
+                                >
+                                  {analyzingProblem ? 'Analyzing...' : '🔍 Analyze Problem'}
+                                </button>
+                              </div>
+                              
+                              {problemAnalysis ? (
+                                <div className="bg-gray-50 dark:bg-[#161b22] border border-gray-200 dark:border-[#30363d] p-3 rounded" style={{ fontSize: '12px', overflowY: 'auto' }}>
+                                  {/* Agent Progress Tracker */}
+                                  <ProblemAgentTracker running={analyzingProblem} completed={problemAnalysisDone} />
+                                  <div style={{ marginBottom: '8px' }}>
+                                    <strong className="text-gray-900 dark:text-[#e6edf3]">Problem Type:</strong> 
+                                    <span className="ml-2 px-2 py-0.5 bg-gray-200 dark:bg-[#21262d] text-gray-800 dark:text-[#8b949e] rounded text-[10px] uppercase font-bold">{problemAnalysis.problem_type}</span>
+                                  </div>
+                                  <div style={{ marginBottom: '8px' }}>
+                                    <strong className="text-gray-900 dark:text-[#e6edf3]">Input Format:</strong>
+                                    <p className="text-gray-700 dark:text-[#8b949e] m-0 mt-1 whitespace-pre-wrap">{problemAnalysis.input_format}</p>
+                                  </div>
+                                  <div style={{ marginBottom: '8px' }}>
+                                    <strong className="text-gray-900 dark:text-[#e6edf3]">Output Format:</strong>
+                                    <p className="text-gray-700 dark:text-[#8b949e] m-0 mt-1 whitespace-pre-wrap">{problemAnalysis.output_format}</p>
+                                  </div>
+                                  <div>
+                                    <strong className="text-gray-900 dark:text-[#e6edf3]">Constraints:</strong>
+                                    <ul className="text-gray-700 dark:text-[#8b949e] m-0 mt-1 pl-4" style={{ listStyleType: 'disc' }}>
+                                      {Object.entries(problemAnalysis.constraints || {}).map(([key, val]) => (
+                                        <li key={key}><code style={{ background: 'rgba(0,0,0,0.1)', padding: '1px 3px', borderRadius: '3px'}}>{key}</code>: {val}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                  
+                                  {constraintInsights && (
+                                    <div style={{ marginTop: '12px', borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: '12px' }}>
+                                      <strong className="text-gray-900 dark:text-[#e6edf3]">1. Constraints Insight</strong>
+                                      <div className="mt-2 text-gray-700 dark:text-[#8b949e]">
+                                        Scale: {constraintInsights.scale} | Cases: {constraintInsights.test_case_count}
+                                        {constraintInsights.tight_constraints?.length > 0 && <div><strong className="text-gray-600">Tight:</strong> {constraintInsights.tight_constraints.join(", ")}</div>}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {expectedTC && (
+                                    <div style={{ marginTop: '12px', borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: '12px' }}>
+                                      <strong className="text-gray-900 dark:text-[#e6edf3]">2. Complexity Estimate</strong>
+                                      <div className="mt-2 text-gray-700 dark:text-[#8b949e]">
+                                        <strong>TC:</strong> {expectedTC} | <strong>SC:</strong> {expectedSC}
+                                        <p className="mt-1">{complexityReasoning}</p>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {detectedPattern && (
+                                    <div style={{ marginTop: '12px', borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: '12px' }}>
+                                      <strong className="text-gray-900 dark:text-[#e6edf3]">3. Detected Pattern</strong>
+                                      <div className="mt-2 text-gray-700 dark:text-[#8b949e] flex items-center gap-2">
+                                        <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300 rounded font-bold uppercase">{detectedPattern}</span>
+                                        <span>(Confidence: {Math.round(patternConfidence * 100)}%)</span>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {strategyPlan && (
+                                    <div style={{ marginTop: '12px', borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: '12px' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <strong className="text-gray-900 dark:text-[#e6edf3]">4. Strategy Plan</strong>
+                                        {strategyPlan.confidence !== undefined && (
+                                          <span style={{ fontSize: '10px' }} className={`px-2 py-0.5 rounded font-bold uppercase ${strategyPlan.confidence >= 0.8 ? 'bg-green-100 text-green-800' : strategyPlan.confidence >= 0.5 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>
+                                            Conf: {Math.round(strategyPlan.confidence * 100)}%
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="mt-2 text-gray-700 dark:text-[#8b949e]">
+                                        <p className="font-medium text-gray-900 dark:text-[#e6edf3]">{strategyPlan.strategy}</p>
+                                        <ul className="pl-4 mt-2 mb-2" style={{ listStyleType: 'decimal' }}>
+                                          {strategyPlan.approach_steps?.map((step, i) => <li key={i}>{step}</li>)}
+                                        </ul>
+                                        {strategyPlan.alternative_strategies?.length > 0 && (
+                                          <div className="mt-2 text-xs">
+                                            <strong>Alternatives:</strong> {strategyPlan.alternative_strategies.join(" | ")}
+                                          </div>
+                                        )}
+                                        {strategyPlan.edge_case_plan?.length > 0 && (
+                                          <div className="mt-1 text-xs">
+                                            <strong>Edge Cases to Handle:</strong> {strategyPlan.edge_case_plan.join(" | ")}
+                                          </div>
+                                        )}
+                                        <p className="italic text-[11px] opacity-80 mt-2">{strategyPlan.justification}</p>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {testCaseValidation && (
+                                    <div style={{ marginTop: '12px', borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: '12px' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <strong className="text-gray-900 dark:text-[#e6edf3]">5. Simulation & Validation</strong>
+                                        <span style={{ fontSize: '10px' }} className={`px-2 py-0.5 rounded font-bold uppercase ${testCaseValidation.passes_sample_tests ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                          {testCaseValidation.passes_sample_tests ? '✅ PASS' : '❌ FAIL'}
+                                        </span>
+                                      </div>
+                                      <div className="mt-2 text-gray-700 dark:text-[#8b949e]">
+                                        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                                           <span className="px-2 py-0.5 bg-gray-200 dark:bg-[#30363d] text-gray-800 dark:text-[#e6edf3] rounded text-[10px] uppercase font-bold">
+                                             Mode: {testCaseValidation.validation_mode}
+                                           </span>
+                                           <span className="px-2 py-0.5 bg-gray-200 dark:bg-[#30363d] text-gray-800 dark:text-[#e6edf3] rounded text-[10px] uppercase font-bold">
+                                             Conf: {Math.round(testCaseValidation.confidence_score * 100)}%
+                                           </span>
+                                        </div>
+                                        {testCaseValidation.validation_mode !== "skipped_non_deterministic" && (
+                                           <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                                              <div className="p-2 bg-gray-100 dark:bg-[#0d1117] rounded border border-gray-200 dark:border-[#30363d]">
+                                                <strong>Predicted:</strong> <br/><span className="whitespace-pre-wrap">{testCaseValidation.predicted_output || 'N/A'}</span>
+                                              </div>
+                                              <div className="p-2 bg-gray-100 dark:bg-[#0d1117] rounded border border-gray-200 dark:border-[#30363d]">
+                                                <strong>Expected:</strong> <br/><span className="whitespace-pre-wrap">{testCaseValidation.expected_output || 'N/A'}</span>
+                                              </div>
+                                           </div>
+                                        )}
+                                        {testCaseValidation.failed_cases?.length > 0 && (
+                                          <div className="mt-2 text-xs text-red-600 dark:text-red-400">
+                                            <strong>Failures:</strong>
+                                            <ul className="pl-4 list-disc">
+                                              {testCaseValidation.failed_cases.map((c, i) => <li key={i}>{c}</li>)}
+                                            </ul>
+                                          </div>
+                                        )}
+                                        {testCaseValidation.edge_case_analysis?.length > 0 && (
+                                          <div className="mt-2 text-xs">
+                                            <strong>Edge Cases simulated:</strong>
+                                            <ul className="pl-4 list-disc">
+                                              {testCaseValidation.edge_case_analysis.map((e, i) => <li key={i}>{e}</li>)}
+                                            </ul>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                  
+                                  {analysisStatus === 'PENDING_DECISION' && (
+                                    <div style={{ marginTop: '16px', padding: '16px', background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '8px', textAlign: 'center' }}>
+                                      <h3 className="text-blue-800 dark:text-blue-300 font-bold mb-3">Analysis Complete. How would you like to proceed?</h3>
+                                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                                        <button onClick={() => handleDecision('hints')} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-bold transition-colors">💡 Get Hints</button>
+                                        <button onClick={() => handleDecision('generate')} className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-bold transition-colors">⚡ Generate Code</button>
+                                        <button onClick={() => handleDecision('manual')} className="px-3 py-1.5 bg-gray-600 hover:bg-gray-700 text-white rounded text-xs font-bold transition-colors">✍️ Write My Own</button>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {analysisStatus === 'LOADING_DECISION' && (
+                                    <div style={{ marginTop: '16px', textAlign: 'center', color: '#8b949e', fontSize: '12px', fontStyle: 'italic' }}>
+                                      Processing decision...
+                                    </div>
+                                  )}
+                                  {analysisStatus === 'RESUMED' && (
+                                    <div style={{ marginTop: '16px', textAlign: 'center', color: '#4ade80', fontSize: '12px', fontWeight: 'bold' }}>
+                                      ✅ Graph resumed based on your choice.
+                                    </div>
+                                  )}
+
+                                </div>
+                              ) : analyzingProblem ? (
+                                <div className="bg-gray-50 dark:bg-[#161b22] border border-gray-200 dark:border-[#30363d] p-3 rounded" style={{ fontSize: '12px', overflowY: 'auto' }}>
+                                  <ProblemAgentTracker running={analyzingProblem} completed={false} />
+                                </div>
+                              ) : (
+                                <div className="text-gray-500 dark:text-[#8b949e] flex items-center justify-center border border-dashed border-gray-300 dark:border-[#30363d] rounded p-4" style={{ flex: 1, fontSize: '12px', textAlign: 'center' }}>
+                                  No analysis yet. Click "Analyze Problem" to process.
+                                </div>
+                              )}
+                            </div>
+                          )}
                           {activeTab === 'logs' ? (
                             <LogsPanel loading={status === 'loading'} completed={status === 'pending' || status === 'completed' || status === 'approving'} />
                           ) : (
@@ -1297,10 +1789,10 @@
 
                     {/* Tools Panel BOTTOM: Diff Viewer */}
                     <Panel defaultSize={50} minSize={20} id="diff-panel">
-                      <div className="right-pane diff-section" style={{ borderTop: '1px solid #21262d' }}>
-                        <div className="pane-header">
+                      <div className="right-pane bg-gray-50 dark:bg-[#0d1117] diff-section border-t border-gray-200 dark:border-[#21262d]">
+                        <div className="pane-header bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-[#21262d] transition-colors duration-200">
                           <DiffIcon size={13} />
-                          <span>Diff Viewer</span>
+                          <span className="text-gray-500 dark:text-[#8b949e]">Diff Viewer</span>
                         </div>
                         <div className="tab-content" style={{ padding: 0 }}>
                           <DiffViewer diffData={diffData} />
@@ -1322,30 +1814,92 @@
                     isOpen={sidebarOpen}
                   />
                 </div>
-                <div className="editor-pane" style={{ flex: 1, borderRight: '1px solid #21262d' }}>
-                  <div className="pane-header">
-                    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#8b949e" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <div className="editor-pane" style={{ flex: 1 }}>
+                  <div className="pane-header bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-[#21262d] transition-colors duration-200">
+                    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-gray-500 dark:text-[#8b949e]" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
                     </svg>
-                    <span>Editor</span>
+                    <span className="text-gray-500 dark:text-[#8b949e]">Editor</span>
                     <div style={{ flex: 1 }} />
-                    <span style={{ fontSize: 10, color: '#484f58', fontFamily: "'JetBrains Mono', monospace" }}>
+                    <span className="text-gray-500 dark:text-[#8b949e]" style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}>
                       {inputCode.split('\n').length} lines
                     </span>
                   </div>
                   <Editor
+                    key={theme}
+                    theme={theme === "dark" ? "vs-dark" : "light"}
                     value={inputCode}
                     onChange={setInputCode}
                     disabled={status === 'loading' || status === 'approving'}
                   />
                 </div>
-                <div className="right-pane" style={{ width: '40%' }}>
-                  <div className="tab-strip">
+                <div className="right-pane bg-gray-50 dark:bg-[#0d1117]" style={{ width: '40%' }}>
+                  <div className="tab-strip bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-[#21262d] transition-colors duration-200">
+                    <button className={`tab-btn ${activeTab === 'problem' ? 'active' : ''}`} onClick={() => setActiveTab('problem')}>Problem Input</button>
                     <button className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => setActiveTab('logs')}><TerminalIcon size={13} />Logs</button>
                     <button className={`tab-btn ${activeTab === 'findings' ? 'active' : ''}`} onClick={() => setActiveTab('findings')}><ListIcon size={13} />{findingsTabLabel}</button>
                     <button className={`tab-btn ${activeTab === 'results' ? 'active' : ''}`} onClick={() => setActiveTab('results')}><DiffIcon size={13} />Results</button>
                   </div>
                   <div className="tab-content">
+                    {activeTab === 'problem' && (
+                      <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', height: '100%', gap: '12px' }}>
+                        <textarea
+                          value={problemDescription}
+                          onChange={(e) => setProblemDescription(e.target.value)}
+                          placeholder="Paste your Codeforces / CodeChef problem here..."
+                          disabled={analyzingProblem}
+                          className="bg-white dark:bg-[#0d1117] text-gray-900 dark:text-[#e6edf3] border border-gray-200 dark:border-[#21262d]"
+                          style={{ flex: 1, resize: 'none', padding: '12px', borderRadius: '6px', fontFamily: 'inherit', fontSize: '13px' }}
+                        />
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <h3 className="text-gray-900 dark:text-[#e6edf3]" style={{ margin: 0, fontSize: '14px', fontWeight: 'bold' }}>Problem Analysis</h3>
+                          <button 
+                            onClick={handleAnalyzeProblem}
+                            disabled={analyzingProblem || !problemDescription.trim()}
+                            className="bg-blue-600 text-white hover:bg-blue-700 transition-colors duration-200"
+                            style={{ padding: '6px 12px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', cursor: (analyzingProblem || !problemDescription.trim()) ? 'not-allowed' : 'pointer', opacity: (analyzingProblem || !problemDescription.trim()) ? 0.6 : 1 }}
+                          >
+                            {analyzingProblem ? 'Analyzing...' : '🔍 Analyze Problem'}
+                          </button>
+                        </div>
+                        
+                        {problemAnalysis ? (
+                          <div className="bg-gray-50 dark:bg-[#161b22] border border-gray-200 dark:border-[#30363d] p-3 rounded" style={{ fontSize: '12px', overflowY: 'auto', flex: 1 }}>
+                            {/* Agent Progress Tracker */}
+                            <ProblemAgentTracker running={analyzingProblem} completed={problemAnalysisDone} />
+                            <div style={{ marginBottom: '8px' }}>
+                              <strong className="text-gray-900 dark:text-[#e6edf3]">Problem Type:</strong> 
+                              <span className="ml-2 px-2 py-0.5 bg-gray-200 dark:bg-[#21262d] text-gray-800 dark:text-[#8b949e] rounded text-[10px] uppercase font-bold">{problemAnalysis.problem_type}</span>
+                            </div>
+                            <div style={{ marginBottom: '8px' }}>
+                              <strong className="text-gray-900 dark:text-[#e6edf3]">Input Format:</strong>
+                              <p className="text-gray-700 dark:text-[#8b949e] m-0 mt-1 whitespace-pre-wrap">{problemAnalysis.input_format}</p>
+                            </div>
+                            <div style={{ marginBottom: '8px' }}>
+                              <strong className="text-gray-900 dark:text-[#e6edf3]">Output Format:</strong>
+                              <p className="text-gray-700 dark:text-[#8b949e] m-0 mt-1 whitespace-pre-wrap">{problemAnalysis.output_format}</p>
+                            </div>
+                            <div>
+                              <strong className="text-gray-900 dark:text-[#e6edf3]">Constraints:</strong>
+                              <ul className="text-gray-700 dark:text-[#8b949e] m-0 mt-1 pl-4" style={{ listStyleType: 'disc' }}>
+                                {Object.entries(problemAnalysis.constraints || {}).map(([key, val]) => (
+                                  <li key={key}><code style={{ background: 'rgba(0,0,0,0.1)', padding: '1px 3px', borderRadius: '3px'}}>{key}</code>: {val}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+                        ) : analyzingProblem ? (
+                          <div className="bg-gray-50 dark:bg-[#161b22] border border-gray-200 dark:border-[#30363d] p-3 rounded" style={{ fontSize: '12px', overflowY: 'auto', flex: 1 }}>
+                            <ProblemAgentTracker running={analyzingProblem} completed={false} />
+                          </div>
+                        ) : (
+                          <div className="text-gray-500 dark:text-[#8b949e] flex items-center justify-center border border-dashed border-gray-300 dark:border-[#30363d] rounded p-4" style={{ flex: 1, fontSize: '12px', textAlign: 'center' }}>
+                            No analysis yet. Click "Analyze Problem" to process.
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {activeTab === 'logs' && <LogsPanel loading={status === 'loading'} completed={status === 'pending' || status === 'completed' || status === 'approving'} />}
                     {activeTab === 'findings' && <FindingsList findings={findings} decisions={decisions} onApprove={handleApproveItem} onReject={handleRejectItem} onApproveAll={handleApproveAll} onRejectAll={handleRejectAll} />}
                     {activeTab === 'results' && <DiffViewer diffData={diffData} />}
@@ -1359,9 +1913,19 @@
           <div className="action-bar">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {(status === 'pending' || status === 'completed') && (
-                <button className="btn-reset" onClick={handleReset}>
+                <button className="btn-reset text-gray-900 dark:text-white" onClick={handleReset}>
                   <RefreshIcon size={12} />
                   New Review
+                </button>
+              )}
+              {status === 'completed' && activeSessionId && (
+                <button 
+                  className="btn-reset text-gray-900 dark:text-white"
+                  onClick={handleImproveCode}
+                  style={{ background: 'rgba(56, 139, 253, 0.15)', borderColor: '#388bfd' }}
+                >
+                  <ZapIcon size={12} />
+                  Improve My Code
                 </button>
               )}
             </div>
