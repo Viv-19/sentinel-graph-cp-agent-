@@ -288,6 +288,10 @@ router.post('/sessions/:id/problem/analyze', async (req, res) => {
       session.pattern_confidence = data.pattern_confidence;
       session.strategy_plan = data.strategy_plan;
       session.test_case_validation = data.test_case_validation;
+      // Update session title with AI-generated problem title
+      if (data.problem_title && data.problem_title.trim()) {
+        session.title = data.problem_title;
+      }
     }
     if (data.status) {
       session.analysis_status = data.status;

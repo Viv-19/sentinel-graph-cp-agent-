@@ -10,12 +10,19 @@ import time
 import uuid
 from typing import TypedDict, Annotated
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_ollama import ChatOllama
+from langchain_groq import ChatGroq
+
+# ──────────────────────────────────────────────
+# LOAD .env
+# ──────────────────────────────────────────────
+
+load_dotenv()
 
 # ──────────────────────────────────────────────
 # LOGGING
@@ -32,53 +39,47 @@ logger = logging.getLogger("sentinel-graph")
 # CONFIG
 # ──────────────────────────────────────────────
 
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:3b")
-OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0"))
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_TEMPERATURE = float(os.getenv("GROQ_TEMPERATURE", "0"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
-FALLBACK_MODELS = [
-    m.strip()
-    for m in os.getenv("FALLBACK_MODELS", "qwen2.5-coder:1.5b,gemma4:e2b").split(",")
-    if m.strip()
-]
 
-logger.info(f"Using model: {OLLAMA_MODEL} (temp={OLLAMA_TEMPERATURE})")
-logger.info(f"Fallback models: {FALLBACK_MODELS}")
+if not GROQ_API_KEY:
+    logger.error("GROQ_API_KEY not set! Please configure it in .env")
+    raise RuntimeError("GROQ_API_KEY is required. Set it in python_service/.env")
+
+logger.info(f"Using model: {GROQ_MODEL} (temp={GROQ_TEMPERATURE}) via Groq API")
 
 # ── Model pool with lazy instantiation ──
-_llm_instances: dict[str, ChatOllama] = {}
+_llm_instances: dict[str, ChatGroq] = {}
 
 
-def get_llm(model_name: str | None = None) -> ChatOllama:
-    """Get or create a ChatOllama instance for the given model."""
-    name = model_name or OLLAMA_MODEL
+def get_llm(model_name: str | None = None) -> ChatGroq:
+    """Get or create a ChatGroq instance for the given model."""
+    name = model_name or GROQ_MODEL
     if name not in _llm_instances:
-        _llm_instances[name] = ChatOllama(
+        _llm_instances[name] = ChatGroq(
             model=name,
-            temperature=OLLAMA_TEMPERATURE,
-            num_predict=2048,
-            timeout=120,
+            api_key=GROQ_API_KEY,
+            temperature=GROQ_TEMPERATURE,
+            max_tokens=2048,
         )
-        logger.info(f"Created LLM instance for model: {name}")
+        logger.info(f"Created Groq LLM instance for model: {name}")
     return _llm_instances[name]
 
 
 def _is_connection_error(error: Exception) -> bool:
-    """Check if error is a connection/server issue (vs a parse error)."""
+    """Check if error is a connection/API issue (vs a parse error)."""
     err_str = f"{type(error).__name__}: {error}".lower()
     return any(kw in err_str for kw in [
         "connecterror", "connectionerror", "refused", "disconnected",
-        "remoteprotocol", "timeout", "winerror", "server disconnected",
-        "connection reset", "broken pipe", "10061",
+        "timeout", "rate_limit", "rate limit", "429", "503", "502",
+        "server error", "api error", "authentication",
     ])
 
 
-def _get_model_chain() -> list[str]:
-    """Return the ordered list of models to try (primary + fallbacks)."""
-    return [OLLAMA_MODEL] + FALLBACK_MODELS
-
-
 # Keep a default reference for backward compat
-llm = get_llm(OLLAMA_MODEL)
+llm = get_llm(GROQ_MODEL)
 
 SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1}
 
@@ -102,6 +103,7 @@ class CodeReviewState(TypedDict):
     thread_id: str
     session_type: str   # "problem" | "code"
     problem_description: str
+    problem_title: str
     problem_analysis: dict
     constraint_insights: dict
     expected_time_complexity: str
@@ -142,42 +144,27 @@ def parse_findings(raw: str) -> list:
 
 def invoke_with_retry(messages: list, agent_name: str, max_retries: int = None) -> list:
     retries = max_retries if max_retries is not None else MAX_RETRIES
-    models = _get_model_chain()
+    current_llm = get_llm()
     last_error = None
 
-    for model_idx, model_name in enumerate(models):
-        current_llm = get_llm(model_name)
-        connection_failed = False
-
-        for attempt in range(retries):
-            try:
-                response = current_llm.invoke(messages)
-                logger.debug(f"[{agent_name}] Attempt {attempt+1} raw output: {response.content[:300]}")
-                findings = parse_findings(response.content)
-                if model_idx > 0:
-                    logger.info(f"[{agent_name}] ✓ Succeeded with fallback model: {model_name}")
-                logger.info(f"[{agent_name}] Attempt {attempt+1} — parsed {len(findings)} findings")
-                return findings
-            except StructuredOutputError as e:
-                last_error = e
-                logger.warning(f"[{agent_name}] Attempt {attempt+1}/{retries} — parse failed")
-            except Exception as e:
-                last_error = e
-                logger.error(f"[{agent_name}] Attempt {attempt+1}/{retries} — LLM error ({model_name}): {type(e).__name__}: {e}")
-                if _is_connection_error(e):
-                    connection_failed = True
-                    break  # Don't retry same model if connection is dead
-
-        # If connection failed, try next fallback model
-        if connection_failed and model_idx < len(models) - 1:
-            logger.warning(f"[{agent_name}] ↻ Switching from {model_name} → {models[model_idx + 1]}")
-            continue
-        # Parse errors don't warrant a model switch
-        if not connection_failed:
-            break
+    for attempt in range(retries):
+        try:
+            response = current_llm.invoke(messages)
+            logger.debug(f"[{agent_name}] Attempt {attempt+1} raw output: {response.content[:300]}")
+            findings = parse_findings(response.content)
+            logger.info(f"[{agent_name}] Attempt {attempt+1} — parsed {len(findings)} findings")
+            return findings
+        except StructuredOutputError as e:
+            last_error = e
+            logger.warning(f"[{agent_name}] Attempt {attempt+1}/{retries} — parse failed")
+        except Exception as e:
+            last_error = e
+            logger.error(f"[{agent_name}] Attempt {attempt+1}/{retries} — LLM error: {type(e).__name__}: {e}")
+            if _is_connection_error(e):
+                time.sleep(2 ** attempt)  # exponential backoff for API errors
 
     raise StructuredOutputError(
-        f"STRUCTURED_OUTPUT_ERROR: All retries exhausted across {len(models)} model(s). Last error: {last_error}"
+        f"STRUCTURED_OUTPUT_ERROR: All {retries} retries exhausted. Last error: {last_error}"
     )
 
 def parse_dict(raw: str) -> dict:
@@ -196,40 +183,27 @@ def parse_dict(raw: str) -> dict:
 
 def invoke_dict_with_retry(messages: list, agent_name: str, max_retries: int = None) -> dict:
     retries = max_retries if max_retries is not None else MAX_RETRIES
-    models = _get_model_chain()
+    current_llm = get_llm()
     last_error = None
 
-    for model_idx, model_name in enumerate(models):
-        current_llm = get_llm(model_name)
-        connection_failed = False
-
-        for attempt in range(retries):
-            try:
-                response = current_llm.invoke(messages)
-                logger.debug(f"[{agent_name}] Attempt {attempt+1} raw output: {response.content[:300]}")
-                result = parse_dict(response.content)
-                if model_idx > 0:
-                    logger.info(f"[{agent_name}] ✓ Succeeded with fallback model: {model_name}")
-                logger.info(f"[{agent_name}] Attempt {attempt+1} — parsed dict successfully")
-                return result
-            except StructuredOutputError as e:
-                last_error = e
-                logger.warning(f"[{agent_name}] Attempt {attempt+1}/{retries} — parse failed")
-            except Exception as e:
-                last_error = e
-                logger.error(f"[{agent_name}] Attempt {attempt+1}/{retries} — LLM error ({model_name}): {type(e).__name__}: {e}")
-                if _is_connection_error(e):
-                    connection_failed = True
-                    break
-
-        if connection_failed and model_idx < len(models) - 1:
-            logger.warning(f"[{agent_name}] ↻ Switching from {model_name} → {models[model_idx + 1]}")
-            continue
-        if not connection_failed:
-            break
+    for attempt in range(retries):
+        try:
+            response = current_llm.invoke(messages)
+            logger.debug(f"[{agent_name}] Attempt {attempt+1} raw output: {response.content[:300]}")
+            result = parse_dict(response.content)
+            logger.info(f"[{agent_name}] Attempt {attempt+1} — parsed dict successfully")
+            return result
+        except StructuredOutputError as e:
+            last_error = e
+            logger.warning(f"[{agent_name}] Attempt {attempt+1}/{retries} — parse failed")
+        except Exception as e:
+            last_error = e
+            logger.error(f"[{agent_name}] Attempt {attempt+1}/{retries} — LLM error: {type(e).__name__}: {e}")
+            if _is_connection_error(e):
+                time.sleep(2 ** attempt)  # exponential backoff for API errors
 
     raise StructuredOutputError(
-        f"STRUCTURED_OUTPUT_ERROR: All retries exhausted across {len(models)} model(s). Last error: {last_error}"
+        f"STRUCTURED_OUTPUT_ERROR: All {retries} retries exhausted. Last error: {last_error}"
     )
 
 # ──────────────────────────────────────────────
@@ -542,17 +516,19 @@ DO NOT solve the problem. DO NOT write code.
 
 Return ONLY a valid JSON object matching this exact structure:
 {{
+  "title": "Two-pointer Array Sum",
   "constraints": {{"n": "<= 10^5", "time_limit": "1.0s"}},
   "input_format": "Number of test cases, followed by...",
   "output_format": "Single integer per test case...",
-  "problem_type": "array" // Choose ONE from: array, string, graph, dp, greedy, math, binary search, implementation, mixed
+  "problem_type": "array"
 }}
 
 Instructions:
+- title: a concise 2-6 word title summarizing the core task. Make it specific (e.g. "Minimum Cost Path" not "Graph Problem").
 - constraints: extract explicit/hidden limits. If missing constraints, infer standard limits.
 - input_format: indicate single or multi-testcase setups.
 - output_format: clearly state what to output per case.
-- problem_type: map to best fitting category.
+- problem_type: map to best fitting category from: array, string, graph, dp, greedy, math, binary search, implementation, mixed.
 
 Problem Description:
 {problem}
@@ -562,17 +538,18 @@ Problem Description:
             {"role": "system", "content": prompt}
         ], agent_name="ProblemAnalyzer")
         
+        title = str(analysis.get("title", "Untitled Problem")).strip()
         result = {
             "constraints": analysis.get("constraints", {}),
             "input_format": str(analysis.get("input_format", "")),
             "output_format": str(analysis.get("output_format", "")),
             "problem_type": str(analysis.get("problem_type", "unknown"))
         }
-        logger.info(f"[ProblemAnalyzer] Extraction completed in {time.time()-start:.1f}s")
-        return {"problem_analysis": result}
+        logger.info(f"[ProblemAnalyzer] Extraction completed in {time.time()-start:.1f}s — title: {title}")
+        return {"problem_analysis": result, "problem_title": title}
     except Exception as e:
         logger.error(f"[ProblemAnalyzer] Parsing failed: {str(e)}")
-        return {"problem_analysis": default_output}
+        return {"problem_analysis": default_output, "problem_title": "Untitled Problem"}
 
 def constraint_analyzer(state: CodeReviewState):
     logger.info("[ConstraintAnalyzer] Starting...")
@@ -760,7 +737,7 @@ Detected Pattern: {pattern}
 def test_case_validator(state: CodeReviewState):
     logger.info("[TestCaseValidator] Starting simulation...")
     start = time.time()
-    
+
     problem_desc = state.get("problem_description", "").strip()
     strategy_plan = state.get("strategy_plan", {})
     expected_tc = state.get("expected_time_complexity", "unknown")
@@ -831,34 +808,34 @@ def hitl_decision_node(state: CodeReviewState):
 
 def return_hints_node(state: CodeReviewState):
     logger.info("[ReturnHintsNode] User opted for hints.")
-    return {} # Halts further code generation
+    return {}
 
 def code_generator_node(state: CodeReviewState):
     logger.info("[CodeGeneratorNode] Starting code generation based on Strategy Plan...")
     start = time.time()
-    
+
     problem_desc = state.get("problem_description", "")
     strategy_plan = state.get("strategy_plan", {})
     expected_tc = state.get("expected_time_complexity", "unknown")
     expected_sc = state.get("expected_space_complexity", "unknown")
     edge_case_plan = strategy_plan.get("edge_case_plan", [])
-    
-    prompt = f"""You are an Expert Competitive Programmer. Write production-ready CP code.
 
-YOUR TASK: Implement the Exact Strategy Plan provided. 
+    prompt = f"""You are an Expert Competitive Programmer. Write production-ready Python code.
+
+YOUR TASK: Implement the Exact Strategy Plan provided.
 - Use Python.
-- Provide fast input wrappers if necessary.
+- Provide fast input wrappers (sys.stdin) if necessary.
 - Follow the expected time and space complexities STRICTLY.
-- Handle ALL identified Edge Cases smoothly without runtime logic faults.
-- Use a clean `solve()` layout. Do not over-engineer with abstracted classes unless naturally required.
-- Do NOT generate pseudo-code. No partial answers.
+- Handle ALL identified Edge Cases smoothly.
+- Use a clean solve() layout.
+- Do NOT generate pseudo-code.
 
-Return ONLY a valid JSON object matching this exact structure:
-{{
-  "generated_code": "def solve():\\n    ...",
-  "language": "python",
-  "notes": ["Implemented prefix array for strict O(N) requirement.", "Added constraint check for empty edge case."]
-}}
+Return your response in this EXACT format:
+```python
+<your complete code here>
+```
+
+Then on a new line after the code block, add any notes about the implementation.
 
 Problem Description: {problem_desc[:1500]}
 Strategy Given: {json.dumps(strategy_plan)}
@@ -866,22 +843,49 @@ Expected Complexities: TC: {expected_tc} | SC: {expected_sc}
 Edge Cases to Prevent: {json.dumps(edge_case_plan)}
 """
     try:
-         res = invoke_dict_with_retry([{"role": "system", "content": prompt}], agent_name="CodeGeneratorNode")
-         gen_code = res.get("generated_code", "")
-         if not gen_code:
-             raise ValueError("Empty generated code returned")
-         logger.info(f"[CodeGeneratorNode] Generation completed in {time.time()-start:.1f}s")
-         return {
-             "input_code": gen_code,
-             "language": str(res.get("language", "python")),
-             "messages": [("ai", f"Code Generated: {'. '.join(res.get('notes', []))}")]
-         }
+        current_llm = get_llm()
+        response = current_llm.invoke([{"role": "system", "content": prompt}])
+        raw = response.content
+
+        # Extract code from markdown code block
+        gen_code = ""
+        code_match = re.search(r'```(?:python)?\s*\n(.*?)```', raw, re.DOTALL)
+        if code_match:
+            gen_code = code_match.group(1).strip()
+        else:
+            # Fallback: find def/import lines as code
+            lines = raw.split('\n')
+            code_lines = []
+            in_code = False
+            for line in lines:
+                if any(line.strip().startswith(kw) for kw in ['import ', 'from ', 'def ', 'class ', 'if ', 'for ', 'while ', 'try:']):
+                    in_code = True
+                if in_code:
+                    code_lines.append(line)
+            gen_code = '\n'.join(code_lines).strip()
+
+        if not gen_code:
+            raise ValueError("Could not extract generated code from LLM response")
+
+        # Extract notes (anything after the code block)
+        notes = []
+        if code_match:
+            after_code = raw[code_match.end():].strip()
+            if after_code:
+                notes = [line.strip().lstrip('- ') for line in after_code.split('\n') if line.strip() and not line.strip().startswith('```')]
+
+        logger.info(f"[CodeGeneratorNode] Generation completed in {time.time()-start:.1f}s")
+        return {
+            "input_code": gen_code,
+            "language": "python",
+            "messages": [("ai", f"Code Generated: {'. '.join(notes[:3]) if notes else 'Ready for review.'}")]
+        }
     except Exception as e:
-         logger.error(f"[CodeGeneratorNode] Generation failed: {e}")
-         return {
-             "input_code": "",
-             "messages": [("ai", "Warning: Code Generation failed. Review Node Logs.")]
-         }
+        logger.error(f"[CodeGeneratorNode] Generation failed: {e}")
+        return {
+            "input_code": "",
+            "messages": [("ai", "Warning: Code Generation failed. Review Node Logs.")]
+        }
 
 def wait_for_user_code_node(state: CodeReviewState):
     logger.info("[WaitForUserCodeNode] User opted to write own code.")
@@ -1035,22 +1039,13 @@ Rules:
         {"role": "user", "content": prompt},
     ]
 
-    # Try primary model, then fallbacks on connection errors
-    models = _get_model_chain()
-    last_error = None
-    for model_name in models:
-        try:
-            current_llm = get_llm(model_name)
-            response = current_llm.invoke(messages)
-            break
-        except Exception as e:
-            last_error = e
-            if _is_connection_error(e):
-                logger.warning(f"[Refactor] ↻ Connection failed with {model_name}, trying fallback...")
-                continue
-            raise
-    else:
-        raise last_error  # type: ignore[misc]
+    # Invoke Groq
+    try:
+        current_llm = get_llm()
+        response = current_llm.invoke(messages)
+    except Exception as e:
+        logger.error(f"[Refactor] LLM error: {type(e).__name__}: {e}")
+        raise
 
     refactored = response.content.strip()
     if refactored.startswith("```"):
@@ -1209,7 +1204,7 @@ class SessionReviewRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": OLLAMA_MODEL}
+    return {"status": "ok", "provider": "groq", "model": GROQ_MODEL}
 
 
 @app.post("/problem/analyze")
@@ -1228,6 +1223,7 @@ def analyze_problem(req: AnalyzeProblemRequest):
 
         return {
             "status": status,
+            "problem_title": result.get("problem_title", ""),
             "problem_analysis": result.get("problem_analysis", {}),
             "constraint_insights": result.get("constraint_insights", {}),
             "expected_time_complexity": result.get("expected_time_complexity", ""),

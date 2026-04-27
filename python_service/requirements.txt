@@ -1,6 +1,6 @@
 fastapi
 uvicorn
 langgraph
-langchain-ollama
+langchain-groq
 langgraph-checkpoint
 python-dotenv
